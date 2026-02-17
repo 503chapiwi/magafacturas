@@ -49,17 +49,17 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             for cell in row:
                 if not cell.value: continue
                 val = normalize_text(cell.value)
-                if 'procesados abarrotes' in val:
+                if 'abarrotes' in val:
                     col_map['abar'] = cell.column
-                if 'agricultura familiar' in val:
+                if 'agricultura' in val:
                     col_map['agri'] = cell.column
 
         if 'abar' not in col_map or 'agri' not in col_map:
             st.error(f"No encontré las columnas. Columnas detectadas: {col_map}")
             st.stop()
 
-        muni_map = {'totonican': 1, 'cristobal': 2, 'francisco': 3, 'xecul': 4,
-                    'momostenango': 5, 'chiquimula': 6, 'reforma': 7, 'bartolo': 8}
+        muni_map = {'totonican, totonicapan': 1, 'san cristobal totonicapan': 2, 'san francisco el alto': 3, 'san andres xecul': 4,
+                    'momostenango': 5, 'santa maria chiquimula': 6, 'santa lucia la reforma': 7, 'san bartolo': 8}
 
         new_count = 0
         progress_bar = st.progress(0)
