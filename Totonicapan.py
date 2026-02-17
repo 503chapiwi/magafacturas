@@ -117,4 +117,22 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     name_e = re.search(r'Contribuyente\n([^\n]+)', text)
 
                     ws_det.append([
-                        name_e.group(1).strip() if name_e else "N
+                        name_e.group(1).strip() if name_e else "N/A",
+                        nit_e.group(1) if nit_e else "N/A",
+                        nit_r.group(1) if nit_r else "N/A",
+                        uuid_val, m_name, alert_status
+                    ])
+                    new_count += 1
+                    processed_uuids.add(uuid_val)
+
+            progress_bar.progress((i + 1) / len(uploaded_pdfs))
+
+        # 4. Save to Buffer
+        output = io.BytesIO()
+        wb.save(output)
+        st.success(f"Procesado: {new_count} facturas.")
+        st.download_button("Descargar Reporte Actualizado", data=output.getvalue(), 
+                           file_name="Reporte_Final.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    except Exception as e:
+        st.error(f"Error técnico: {e}")
