@@ -22,7 +22,7 @@ def clean_currency(value):
 
 # --- WEB UI ---
 st.title("🇬🇹 MAGA: Procesador de Facturas por la LAE")
-uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True,
+uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True
                                  help='Arrastre y suelte sus facturas aquí. El límite es 200mb por archivo')
 uploaded_xlsx = st.file_uploader(label='2. Seleccione su Archivo de Excel', type='xlsx',
                                  help='Arraste y suelte el archivo de Excel dónde van los totales de las facturas')
@@ -31,7 +31,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
     try:
         input_buffer = io.BytesIO(uploaded_xlsx.read())
         wb = openpyxl.load_workbook(input_buffer)
-        ws = wb['Hoja1']
+        ws = wb.active 
         
         # 1. Setup/Load "Extra Detalles"
         if "Extra Detalles" not in wb.sheetnames:
@@ -47,7 +47,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         # 2. IMPROVED COLUMN MAPPING
         # In your file, these are in Row 6. We search for the specific MAGA wording.
         col_map = {}
-        for row in ws.iter_rows(min_row=1, max_row=15): 
+        for row in ws.iter_rows(min_row=1, max_row=50): 
             for cell in row:
                 if not cell.value: continue
                 val = normalize_text(cell.value)
@@ -60,7 +60,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             st.error(f"No encontré las columnas. Columnas detectadas: {col_map}")
             st.stop()
 
-        muni_map = {'totonicapan, totonicapan': 1, 'san cristobal': 2, 'san francisco': 3, 'san andres xecul': 4,
+        muni_map = {'totonican, totonicapan': 1, 'san cristobal totonicapan': 2, 'san francisco el alto': 3, 'san andres xecul': 4,
                     'momostenango': 5, 'santa maria chiquimula': 6, 'santa lucia la reforma': 7, 'san bartolo': 8}
 
         new_count = 0
@@ -90,7 +90,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     abarrotes = ['pollo', 'tostadas']
                     
                     for row_tbl in tables:
-                        if not row_tbl or len(row_tbl) < 8 or not row_tbl[3]: continue
+                        if not row_tbl or len(row_tbl) < 8 or not row[3]: continue
                         desc = normalize_text(row_tbl[3])
                         val = clean_currency(row_tbl[7])
                         if any(x in desc for x in cultivados): 
@@ -103,24 +103,29 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     for row_ex in ws.iter_rows(min_row=1, max_row=200):
                         # Get value from Column A and handle spaces/types
                         cell_a_val = str(row_ex[0].value).strip() if row_ex[0].value is not None else ""
+                        st.write(f"Excel ID: '{cell_a_val}' vs PDF ID: '{m_id}'")
                         
+                        if not cell_a_val:
+                            continue
+
                         try:
                             if int(float(cell_a_val)) == int(m_id):
-                                st.write(f"Actualizando fila {row_ex[0].row} para muni {m_id}") # Check if this appears in Streamlit
                                 r_idx = row_ex[0].row
-                        except ValueError:
+                                found_row = True
+
+                                # Update Abarrotes
+                                current_abar = ws.cell(r_idx, col_map['abar']).value
+                                ws.cell(r_idx, col_map['abar']).value = (float(current_abar) if current_abar else 0.0) + abar_sum
+                                
+                                # Update Agricultura
+                                current_agri = ws.cell(r_idx, col_map['agri']).value
+                                ws.cell(r_idx, col_map['agri']).value = (float(current_agri) if current_agri else 0.0) + agri_sum
+                                
+                                break
+                        except (ValueError, TypeError):
                             continue
-                            
-                        # Update Abarrotes
-                        current_abar = ws.cell(r_idx, col_map['abar']).value
-                        ws.cell(r_idx, col_map['abar']).value = (float(current_abar) if current_abar else 0.0) + abar_sum
-                        
-                        # Update Agricultura
-                        current_agri = ws.cell(r_idx, col_map['agri']).value
-                        ws.cell(r_idx, col_map['agri']).value = (float(current_agri) if current_agri else 0.0) + agri_sum
-                        
-                        found_row = True
-                        break
+                if not found_row:
+                    st.warning(f'No ID found --  ID:{m_id} -- muni found though:{m_name}')
                     
                     # 4. Alert & Metadata
                     total_rec = abar_sum + agri_sum
@@ -152,4 +157,3 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
     except Exception as e:
         st.error(f"Error detectado: {e}")
-
