@@ -31,7 +31,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
     try:
         input_buffer = io.BytesIO(uploaded_xlsx.read())
         wb = openpyxl.load_workbook(input_buffer)
-        ws = wb.['Hoja1']
+        ws = wb['Hoja1']
         
         # 1. Setup/Load "Extra Detalles"
         if "Extra Detalles" not in wb.sheetnames:
