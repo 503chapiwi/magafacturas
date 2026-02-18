@@ -21,9 +21,11 @@ def clean_currency(value):
         return 0.0
 
 # --- WEB UI ---
-st.title("🇬🇹 MAGA: Procesador de Alimentación Escolar")
-uploaded_pdfs = st.file_uploader("1. Subir Facturas (PDF)", type="pdf", accept_multiple_files=True)
-uploaded_xlsx = st.file_uploader("2. Subir Reporte Excel", type="xlsx")
+st.title("🇬🇹 MAGA: Procesador de Facturas por la LAE")
+uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True
+                                 help='Arrastre y suelte sus facturas aquí. El límite es 200mb por archivo')
+uploaded_xlsx = st.file_uploader(label='2. Seleccione su Archivo de Excel', type='xlsx',
+                                 help='Arraste y suelte el archivo de Excel dónde van los totales de las facturas')
 
 if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
     try:
@@ -84,14 +86,17 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
                 if m_id:
                     abar_sum, agri_sum = 0, 0
-                    grown = ['tomate', 'pina', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 'miltomate']
+                    cultivados = ['tomate', 'pina', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 'miltomate']
+                    abarrotes = ['pollo', 'tostadas']
                     
                     for row_tbl in tables:
-                        if not row_tbl or len(row_tbl) < 8: continue
+                        if not row_tbl or len(row_tbl) < 8 or not row[3]: continue
                         desc = normalize_text(row_tbl[3])
                         val = clean_currency(row_tbl[7])
-                        if any(x in desc for x in grown): agri_sum += val
-                        else: abar_sum += val
+                        if any(x in desc for x in cultivados): 
+                            agri_sum += val
+                        if any(x in desc for x in abarrotes):
+                            abar_sum += val
                     
                     # --- THE FIX: Robust Row Selection ---
                     found_row = False
@@ -99,19 +104,22 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                         # Get value from Column A and handle spaces/types
                         cell_a_val = str(row_ex[0].value).strip() if row_ex[0].value is not None else ""
                         
-                        if cell_a_val == str(m_id):
-                            r_idx = row_ex[0].row
+                        try:
+                            if int(float(cell_a_val)) == int(m_id):
+                                r_idx = row_ex[0].row
+                        except ValueError:
+                            continue
                             
-                            # Update Abarrotes
-                            current_abar = ws.cell(r_idx, col_map['abar']).value
-                            ws.cell(r_idx, col_map['abar']).value = (float(current_abar) if current_abar else 0.0) + abar_sum
-                            
-                            # Update Agricultura
-                            current_agri = ws.cell(r_idx, col_map['agri']).value
-                            ws.cell(r_idx, col_map['agri']).value = (float(current_agri) if current_agri else 0.0) + agri_sum
-                            
-                            found_row = True
-                            break
+                        # Update Abarrotes
+                        current_abar = ws.cell(r_idx, col_map['abar']).value
+                        ws.cell(r_idx, col_map['abar']).value = (float(current_abar) if current_abar else 0.0) + abar_sum
+                        
+                        # Update Agricultura
+                        current_agri = ws.cell(r_idx, col_map['agri']).value
+                        ws.cell(r_idx, col_map['agri']).value = (float(current_agri) if current_agri else 0.0) + agri_sum
+                        
+                        found_row = True
+                        break
                     
                     # 4. Alert & Metadata
                     total_rec = abar_sum + agri_sum
@@ -120,7 +128,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
                     nit_e = re.search(r'Emisor:\s*(\d+)', text, re.I)
                     nit_r = re.search(r'Receptor:\s*(\d+)', text, re.I)
-                    name_e = re.search(r'Contribuyente\n([^\n]+)', text)
+                    name_e = re.search(r'(?:Factura|Contribuyente)\s*\n?([^\n\d]+)', text)
 
                     ws_det.append([
                         name_e.group(1).strip() if name_e else "N/A",
@@ -137,8 +145,10 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         output = io.BytesIO()
         wb.save(output)
         st.success(f"¡Éxito! {new_count} facturas procesadas correctamente.")
+        output.seek(0)
         st.download_button("Descargar Reporte Final", data=output.getvalue(), 
                            file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"Error detectado: {e}")
+
