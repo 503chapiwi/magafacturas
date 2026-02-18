@@ -31,7 +31,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
     try:
         input_buffer = io.BytesIO(uploaded_xlsx.read())
         wb = openpyxl.load_workbook(input_buffer)
-        ws = wb.active 
+        ws = wb.['Hoja1']
         
         # 1. Setup/Load "Extra Detalles"
         if "Extra Detalles" not in wb.sheetnames:
@@ -60,7 +60,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             st.error(f"No encontré las columnas. Columnas detectadas: {col_map}")
             st.stop()
 
-        muni_map = {'totonican, totonicapan': 1, 'san cristobal totonicapan': 2, 'san francisco el alto': 3, 'san andres xecul': 4,
+        muni_map = {'totonicapan, totonicapan': 1, 'san cristobal': 2, 'san francisco': 3, 'san andres xecul': 4,
                     'momostenango': 5, 'santa maria chiquimula': 6, 'santa lucia la reforma': 7, 'san bartolo': 8}
 
         new_count = 0
@@ -90,7 +90,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     abarrotes = ['pollo', 'tostadas']
                     
                     for row_tbl in tables:
-                        if not row_tbl or len(row_tbl) < 8 or not row[3]: continue
+                        if not row_tbl or len(row_tbl) < 8 or not row_tbl[3]: continue
                         desc = normalize_text(row_tbl[3])
                         val = clean_currency(row_tbl[7])
                         if any(x in desc for x in cultivados): 
@@ -106,6 +106,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                         
                         try:
                             if int(float(cell_a_val)) == int(m_id):
+                                st.write(f"Actualizando fila {row_ex[0].row} para muni {m_id}") # Check if this appears in Streamlit
                                 r_idx = row_ex[0].row
                         except ValueError:
                             continue
