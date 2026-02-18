@@ -22,7 +22,7 @@ def clean_currency(value):
 
 # --- WEB UI ---
 st.title("🇬🇹 MAGA: Procesador de Facturas por la LAE")
-uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True
+uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True,
                                  help='Arrastre y suelte sus facturas aquí. El límite es 200mb por archivo')
 uploaded_xlsx = st.file_uploader(label='2. Seleccione su Archivo de Excel', type='xlsx',
                                  help='Arraste y suelte el archivo de Excel dónde van los totales de las facturas')
