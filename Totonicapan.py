@@ -100,43 +100,45 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     
                     # --- THE FIX: Robust Row Selection ---
                     found_row = False
-                    r_idx = None # Initialize to avoid NameError
                     
-                    for row_ex in ws.iter_rows(min_row=1, max_row=200):
-                        # 1. Get value from Column A safely
-                        raw_val = row_ex[0].value
-                        if raw_val is None:
+                    # We look through the rows
+                    for row_ex in ws.iter_rows(min_row=1, max_row=300):
+                        # 1. Get the raw value from Column A
+                        raw_cell = row_ex[0].value
+                        if raw_cell is None:
                             continue
                         
-                        # Clean the value: remove spaces and convert to string
-                        cell_a_val = str(raw_val).strip()
+                        # 2. Clean it up for comparison
+                        # We convert to string, remove decimals (.0), and remove spaces
+                        clean_cell = str(raw_cell).split('.')[0].strip()
+                        target_id = str(m_id).strip()
                         
-                        try:
-                            # 2. THE SECRET SAUCE: 
-                            # Convert both to float first, then int. 
-                            # This makes "1", "1.0", and 1 (number) all equal to 1.
-                            if int(float(cell_a_val)) == int(m_id):
-                                r_idx = row_ex[0].row
+                        # 3. Check for a match
+                        if clean_cell == target_id:
+                            r_idx = row_ex[0].row
+                            
+                            # 4. Get current values safely
+                            try:
+                                val_abar = ws.cell(row=r_idx, column=col_map['abar']).value
+                                val_agri = ws.cell(row=r_idx, column=col_map['agri']).value
                                 
-                                # 3. Update the values inside the IF statement
-                                # Use .column index from your col_map
-                                curr_abar = ws.cell(row=r_idx, column=col_map['abar']).value or 0
-                                curr_agri = ws.cell(row=r_idx, column=col_map['agri']).value or 0
+                                # Convert current values to float (handle None or empty strings)
+                                current_abar = float(val_abar) if val_abar else 0.0
+                                current_agri = float(val_agri) if val_agri else 0.0
                                 
-                                # Write new values (forcing float math)
-                                ws.cell(row=r_idx, column=col_map['abar']).value = float(curr_abar) + abar_sum
-                                ws.cell(row=r_idx, column=col_map['agri']).value = float(curr_agri) + agri_sum
+                                # 5. Write the NEW values
+                                ws.cell(row=r_idx, column=col_map['abar']).value = current_abar + abar_sum
+                                ws.cell(row=r_idx, column=col_map['agri']).value = current_agri + agri_sum
                                 
-                                st.write(f"✅ Fila {r_idx} actualizada para {m_name}")
+                                st.write(f"✅ Fila {r_idx} encontrada para ID {m_id} ({m_name})")
                                 found_row = True
-                                break # Exit the row loop once found
-                                
-                        except (ValueError, TypeError):
-                            # This happens if the row has text like "No." or "Municipio"
-                            continue
-                    
+                                break # Stop searching rows for this PDF
+                            except Exception as e:
+                                st.error(f"Error escribiendo en fila {r_idx}: {e}")
+                                break
+
                     if not found_row:
-                        st.warning(f"⚠️ No se encontró el ID '{m_id}' en la Columna A para el municipio {m_name}")
+                        st.warning(f"⚠️ No se encontró el ID '{m_id}' en la Columna A del Excel para el municipio {m_name}.")
                     
                     # 4. Alert & Metadata
                     total_rec = abar_sum + agri_sum
