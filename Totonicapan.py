@@ -99,44 +99,44 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                             abar_sum += val
                     
                     # --- THE FIX: Robust Row Selection ---
-found_row = False
-r_idx = None # Initialize to avoid NameError
-
-for row_ex in ws.iter_rows(min_row=1, max_row=200):
-    # 1. Get value from Column A safely
-    raw_val = row_ex[0].value
-    if raw_val is None:
-        continue
-    
-    # Clean the value: remove spaces and convert to string
-    cell_a_val = str(raw_val).strip()
-    
-    try:
-        # 2. THE SECRET SAUCE: 
-        # Convert both to float first, then int. 
-        # This makes "1", "1.0", and 1 (number) all equal to 1.
-        if int(float(cell_a_val)) == int(m_id):
-            r_idx = row_ex[0].row
-            
-            # 3. Update the values inside the IF statement
-            # Use .column index from your col_map
-            curr_abar = ws.cell(row=r_idx, column=col_map['abar']).value or 0
-            curr_agri = ws.cell(row=r_idx, column=col_map['agri']).value or 0
-            
-            # Write new values (forcing float math)
-            ws.cell(row=r_idx, column=col_map['abar']).value = float(curr_abar) + abar_sum
-            ws.cell(row=r_idx, column=col_map['agri']).value = float(curr_agri) + agri_sum
-            
-            st.write(f"✅ Fila {r_idx} actualizada para {m_name}")
-            found_row = True
-            break # Exit the row loop once found
-            
-    except (ValueError, TypeError):
-        # This happens if the row has text like "No." or "Municipio"
-        continue
-
-if not found_row:
-    st.warning(f"⚠️ No se encontró el ID '{m_id}' en la Columna A para el municipio {m_name}")
+                    found_row = False
+                    r_idx = None # Initialize to avoid NameError
+                    
+                    for row_ex in ws.iter_rows(min_row=1, max_row=200):
+                        # 1. Get value from Column A safely
+                        raw_val = row_ex[0].value
+                        if raw_val is None:
+                            continue
+                        
+                        # Clean the value: remove spaces and convert to string
+                        cell_a_val = str(raw_val).strip()
+                        
+                        try:
+                            # 2. THE SECRET SAUCE: 
+                            # Convert both to float first, then int. 
+                            # This makes "1", "1.0", and 1 (number) all equal to 1.
+                            if int(float(cell_a_val)) == int(m_id):
+                                r_idx = row_ex[0].row
+                                
+                                # 3. Update the values inside the IF statement
+                                # Use .column index from your col_map
+                                curr_abar = ws.cell(row=r_idx, column=col_map['abar']).value or 0
+                                curr_agri = ws.cell(row=r_idx, column=col_map['agri']).value or 0
+                                
+                                # Write new values (forcing float math)
+                                ws.cell(row=r_idx, column=col_map['abar']).value = float(curr_abar) + abar_sum
+                                ws.cell(row=r_idx, column=col_map['agri']).value = float(curr_agri) + agri_sum
+                                
+                                st.write(f"✅ Fila {r_idx} actualizada para {m_name}")
+                                found_row = True
+                                break # Exit the row loop once found
+                                
+                        except (ValueError, TypeError):
+                            # This happens if the row has text like "No." or "Municipio"
+                            continue
+                    
+                    if not found_row:
+                        st.warning(f"⚠️ No se encontró el ID '{m_id}' en la Columna A para el municipio {m_name}")
                     
                     # 4. Alert & Metadata
                     total_rec = abar_sum + agri_sum
