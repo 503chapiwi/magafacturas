@@ -74,4 +74,99 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     t = p.extract_table()
                     if t: tables.extend(t)
 
-            uuid_m = re.search(r'[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}',
+            uuid_m = re.search(r'[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}', text, re.I)
+            uuid_val = uuid_m.group(0) if uuid_m else pdf_file.name
+
+            if uuid_val in processed_uuids: continue
+
+            norm_text = normalize_text(text)
+            m_id = next((v for k, v in muni_map.items() if k in norm_text), None)
+            m_name = next((k for k in muni_map if k in norm_text), "N/A")
+
+            # ONLY proceed with calculations if a Municipality was found
+            if m_id:
+                abar_sum, agri_sum = 0, 0
+                cultivados = ['tomate', 'pina', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 'miltomate']
+                abarrotes = ['pollo', 'tostadas']
+                
+                for row_tbl in tables:
+                    # Fixed: Changed row[3] to row_tbl[3] to prevent errors
+                    if not row_tbl or len(row_tbl) < 8 or not row_tbl[3]: continue
+                    desc = normalize_text(row_tbl[3])
+                    val = clean_currency(row_tbl[7])
+                    if any(x in desc for x in cultivados): 
+                        agri_sum += val
+                    if any(x in desc for x in abarrotes):
+                        abar_sum += val
+                
+                # --- THE FIX: Robust Row Selection (Grid Search) ---
+                found_row = False
+                
+                for row_ex in ws.iter_rows(min_row=1, max_row=300, min_col=1, max_col=10):
+                    for cell in row_ex:
+                        if cell.value is None:
+                            continue
+                        
+                        clean_cell_num = str(cell.value).split('.')[0].strip()
+                        clean_cell_text = normalize_text(str(cell.value))
+                        
+                        target_id = str(m_id).strip()
+                        target_name = str(m_name).strip()
+                        
+                        if clean_cell_num == target_id or target_name in clean_cell_text:
+                            r_idx = cell.row
+                            
+                            try:
+                                val_abar = ws.cell(row=r_idx, column=col_map['abar']).value
+                                val_agri = ws.cell(row=r_idx, column=col_map['agri']).value
+                                
+                                current_abar = float(val_abar) if val_abar else 0.0
+                                current_agri = float(val_agri) if val_agri else 0.0
+                                
+                                ws.cell(row=r_idx, column=col_map['abar']).value = current_abar + abar_sum
+                                ws.cell(row=r_idx, column=col_map['agri']).value = current_agri + agri_sum
+                                
+                                st.write(f"✅ Fila {r_idx} actualizada para {m_name}")
+                                found_row = True
+                                break 
+                            except Exception as e:
+                                st.error(f"Error escribiendo en fila {r_idx}: {e}")
+                                break
+                    
+                    if found_row:
+                        break 
+
+                if not found_row:
+                    st.warning(f"⚠️ No encontré ni el ID '{m_id}' ni el nombre '{m_name}' en el Excel.")
+                
+                # 4. Alert & Metadata (Now correctly inside the if m_id block)
+                total_rec = abar_sum + agri_sum
+                perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
+                alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
+
+                nit_e = re.search(r'Emisor:\s*(\d+)', text, re.I)
+                nit_r = re.search(r'Receptor:\s*(\d+)', text, re.I)
+                name_e = re.search(r'(?:Factura|Contribuyente)\s*\n?([^\n\d]+)', text)
+
+                ws_det.append([
+                    name_e.group(1).strip() if name_e else "N/A",
+                    nit_e.group(1) if nit_e else "N/A",
+                    nit_r.group(1) if nit_r else "N/A",
+                    uuid_val, m_name, alert_status
+                ])
+                new_count += 1
+                processed_uuids.add(uuid_val)
+
+            # Update progress bar outside the if m_id block, but inside the PDF loop
+            progress_bar.progress((i + 1) / len(uploaded_pdfs))
+
+        # 5. Final Export (Properly outside the PDF loop)
+        output = io.BytesIO()
+        wb.save(output)
+        st.success(f"¡Éxito! {new_count} facturas procesadas correctamente.")
+        output.seek(0)
+        st.download_button("Descargar Reporte Final", data=output.getvalue(), 
+                           file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    except Exception as e:
+        st.error(f"Error detectado: {e}")
