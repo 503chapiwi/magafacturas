@@ -147,63 +147,63 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                         st.warning(f"⚠️ No encontré ni el ID '{m_id}' ni el nombre '{m_name}' en el Excel.")
                     
                     # 4. Alert & Metadata
-                    total_rec = abar_sum + agri_sum
-                    perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
-                    alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
+                total_rec = abar_sum + agri_sum
+                perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
+                alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
 
-                    nit_e = re.search(r'Emisor:\s*(\d+)', text, re.I)
-                    nit_r = re.search(r'Receptor:\s*(\d+)', text, re.I)
-                    name_e = re.search(r'(?:Factura|Contribuyente)\s*\n?([^\n\d]+)', text)
+                nit_e = re.search(r'Emisor:\s*(\d+)', text, re.I)
+                nit_r = re.search(r'Receptor:\s*(\d+)', text, re.I)
+                name_e = re.search(r'(?:Factura|Contribuyente)\s*\n?([^\n\d]+)', text)
 
-                    ws_det.append([
-                        name_e.group(1).strip() if name_e else "N/A",
-                        nit_e.group(1) if nit_e else "N/A",
-                        nit_r.group(1) if nit_r else "N/A",
-                        uuid_val, m_name, alert_status
-                    ])
-                    new_count += 1
-                    processed_uuids.add(uuid_val)
+                ws_det.append([
+                    name_e.group(1).strip() if name_e else "N/A",
+                    nit_e.group(1) if nit_e else "N/A",
+                    nit_r.group(1) if nit_r else "N/A",
+                    uuid_val, m_name, alert_status
+                ])
+                new_count += 1
+                processed_uuids.add(uuid_val)
 
-            progress_bar.progress((i + 1) / len(uploaded_pdfs))
+        progress_bar.progress((i + 1) / len(uploaded_pdfs))
 
-        # 5. Final Export
-        output = io.BytesIO()
-        wb.save(output)
-        st.success(f"¡Éxito! {new_count} facturas procesadas correctamente.")
-        output.seek(0)
-        st.download_button("Descargar Reporte Final", data=output.getvalue(), 
-                           file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # 5. Final Export
+    output = io.BytesIO()
+    wb.save(output)
+    st.success(f"¡Éxito! {new_count} facturas procesadas correctamente.")
+    output.seek(0)
+    st.download_button("Descargar Reporte Final", data=output.getvalue(), 
+                       file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    except Exception as e:
-        st.error(f"Error detectado: {e}")
-                    
-                    # 4. Alert & Metadata
-                    total_rec = abar_sum + agri_sum
-                    perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
-                    alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
+except Exception as e:
+    st.error(f"Error detectado: {e}")
+                
+                # 4. Alert & Metadata
+                total_rec = abar_sum + agri_sum
+                perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
+                alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
 
-                    nit_e = re.search(r'Emisor:\s*(\d+)', text, re.I)
-                    nit_r = re.search(r'Receptor:\s*(\d+)', text, re.I)
-                    name_e = re.search(r'(?:Factura|Contribuyente)\s*\n?([^\n\d]+)', text)
+                nit_e = re.search(r'Emisor:\s*(\d+)', text, re.I)
+                nit_r = re.search(r'Receptor:\s*(\d+)', text, re.I)
+                name_e = re.search(r'(?:Factura|Contribuyente)\s*\n?([^\n\d]+)', text)
 
-                    ws_det.append([
-                        name_e.group(1).strip() if name_e else "N/A",
-                        nit_e.group(1) if nit_e else "N/A",
-                        nit_r.group(1) if nit_r else "N/A",
-                        uuid_val, m_name, alert_status
-                    ])
-                    new_count += 1
-                    processed_uuids.add(uuid_val)
+                ws_det.append([
+                    name_e.group(1).strip() if name_e else "N/A",
+                    nit_e.group(1) if nit_e else "N/A",
+                    nit_r.group(1) if nit_r else "N/A",
+                    uuid_val, m_name, alert_status
+                ])
+                new_count += 1
+                processed_uuids.add(uuid_val)
 
-            progress_bar.progress((i + 1) / len(uploaded_pdfs))
+        progress_bar.progress((i + 1) / len(uploaded_pdfs))
 
-        # 5. Final Export
-        output = io.BytesIO()
-        wb.save(output)
-        st.success(f"¡Éxito! {new_count} facturas procesadas correctamente.")
-        output.seek(0)
-        st.download_button("Descargar Reporte Final", data=output.getvalue(), 
-                           file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # 5. Final Export
+    output = io.BytesIO()
+    wb.save(output)
+    st.success(f"¡Éxito! {new_count} facturas procesadas correctamente.")
+    output.seek(0)
+    st.download_button("Descargar Reporte Final", data=output.getvalue(), 
+                       file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    except Exception as e:
-        st.error(f"Error detectado: {e}")
+except Exception as e:
+    st.error(f"Error detectado: {e}")
