@@ -198,47 +198,47 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                         if any(x in desc for x in abarrotes):
                             abar_sum += val
                     
-                    # --- THE FIX: Robust Row Selection ---
-                    found_row = False
+            # --- THE FIX: Robust Row Selection ---
+            found_row = False
+            
+            # We look through the rows
+            for row_ex in ws.iter_rows(min_row=1, max_row=300):
+                # 1. Get the raw value from Column A
+                raw_cell = row_ex[0].value
+                if raw_cell is None:
+                    continue
+                
+                # 2. Clean it up for comparison
+                # We convert to string, remove decimals (.0), and remove spaces
+                clean_cell = str(raw_cell).split('.')[0].strip()
+                target_id = str(m_id).strip()
+                
+                # 3. Check for a match
+                if clean_cell == target_id:
+                    r_idx = row_ex[0].row
                     
-                    # We look through the rows
-                    for row_ex in ws.iter_rows(min_row=1, max_row=300):
-                        # 1. Get the raw value from Column A
-                        raw_cell = row_ex[0].value
-                        if raw_cell is None:
-                            continue
+                    # 4. Get current values safely
+                    try:
+                        val_abar = ws.cell(row=r_idx, column=col_map['abar']).value
+                        val_agri = ws.cell(row=r_idx, column=col_map['agri']).value
                         
-                        # 2. Clean it up for comparison
-                        # We convert to string, remove decimals (.0), and remove spaces
-                        clean_cell = str(raw_cell).split('.')[0].strip()
-                        target_id = str(m_id).strip()
+                        # Convert current values to float (handle None or empty strings)
+                        current_abar = float(val_abar) if val_abar else 0.0
+                        current_agri = float(val_agri) if val_agri else 0.0
                         
-                        # 3. Check for a match
-                        if clean_cell == target_id:
-                            r_idx = row_ex[0].row
-                            
-                            # 4. Get current values safely
-                            try:
-                                val_abar = ws.cell(row=r_idx, column=col_map['abar']).value
-                                val_agri = ws.cell(row=r_idx, column=col_map['agri']).value
-                                
-                                # Convert current values to float (handle None or empty strings)
-                                current_abar = float(val_abar) if val_abar else 0.0
-                                current_agri = float(val_agri) if val_agri else 0.0
-                                
-                                # 5. Write the NEW values
-                                ws.cell(row=r_idx, column=col_map['abar']).value = current_abar + abar_sum
-                                ws.cell(row=r_idx, column=col_map['agri']).value = current_agri + agri_sum
-                                
-                                st.write(f"✅ Fila {r_idx} encontrada para ID {m_id} ({m_name})")
-                                found_row = True
-                                break # Stop searching rows for this PDF
-                            except Exception as e:
-                                st.error(f"Error escribiendo en fila {r_idx}: {e}")
-                                break
+                        # 5. Write the NEW values
+                        ws.cell(row=r_idx, column=col_map['abar']).value = current_abar + abar_sum
+                        ws.cell(row=r_idx, column=col_map['agri']).value = current_agri + agri_sum
+                        
+                        st.write(f"✅ Fila {r_idx} encontrada para ID {m_id} ({m_name})")
+                        found_row = True
+                        break # Stop searching rows for this PDF
+                    except Exception as e:
+                        st.error(f"Error escribiendo en fila {r_idx}: {e}")
+                        break
 
-                    if not found_row:
-                        st.warning(f"⚠️ No se encontró el ID '{m_id}' en la Columna A del Excel para el municipio {m_name}.")
+            if not found_row:
+                st.warning(f"⚠️ No se encontró el ID '{m_id}' en la Columna A del Excel para el municipio {m_name}.")
                     
                     # 4. Alert & Metadata
                     total_rec = abar_sum + agri_sum
