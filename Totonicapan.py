@@ -14,53 +14,66 @@ def normalize_text(text):
     return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn').lower()
 
 def safe_float(val):
-    """Safely converts any Excel cell value (even with 'Q', '-', or spaces) into a usable number."""
+    """Aggressively strips 'Q', spaces, and dashes from Excel cells to prevent math crashes."""
     if val is None: return 0.0
     s = str(val).strip()
     if not s or s == '-': return 0.0
-    s = s.replace(',', '') # Handle thousands separators
-    s = re.sub(r'[^\d\.\-]', '', s) # Strip everything but numbers and decimals
+    s = s.replace(',', '') 
+    s = re.sub(r'[^\d\.\-]', '', s) 
+    if s.count('.') > 1:
+        parts = s.rsplit('.', 1)
+        s = parts[0].replace('.', '') + '.' + parts[1]
     try: return float(s)
     except ValueError: return 0.0
 
 def clean_currency(value):
-    """Specific parser for OCR-extracted PDF currency amounts."""
+    """Advanced parser for PDF OCR errors like '8.986.00' or '225,00'."""
     if not value: return 0.0
-    raw = str(value).strip()
+    raw = str(value).strip().replace(' ', '')
     raw = re.sub(r'[^\d\.,]', '', raw)
     if not raw: return 0.0
     
-    if ',' in raw and '.' in raw:
-        raw = raw.replace(',', '') 
-    elif ',' in raw and re.search(r',\d{2}$', raw):
-        raw = raw.replace(',', '.') 
+    # Catch comma-as-decimal (e.g. 225,00)
+    if re.search(r',\d{1,2}$', raw):
+        parts = raw.rsplit(',', 1)
+        raw = parts[0].replace('.', '').replace(',', '') + '.' + parts[1]
     else:
         raw = raw.replace(',', '')
+        
+    # Catch double periods (e.g. 8.986.00)
+    if raw.count('.') > 1:
+        parts = raw.rsplit('.', 1)
+        raw = parts[0].replace('.', '') + '.' + parts[1]
         
     try: return float(raw)
     except ValueError: return 0.0
 
+def extract_value_from_row(row_list, total_idx):
+    """Safely extracts the price from a row, with fallbacks if columns are shifted."""
+    if total_idx != -1 and len(row_list) > total_idx:
+        val = clean_currency(row_list[total_idx])
+        if val > 0: return val
+    # Fallback: scan backwards from the right side of the table
+    for item in reversed(row_list):
+        val = clean_currency(item)
+        if val > 0: return val
+    return 0.0
+
 # --- TRUCO CSS PARA TRADUCIR LA INTERFAZ A ESPAÑOL ---
 st.markdown("""
     <style>
-        .stFileUploader > div > div > div > div > span:first-child {
-            display: none;
-        }
+        .stFileUploader > div > div > div > div > span:first-child { display: none; }
         .stFileUploader > div > div > div > div::before {
             content: "Arrastre y suelte los archivos aquí";
-            display: block;
-            font-weight: 600;
-            margin-bottom: 5px;
+            display: block; font-weight: 600; margin-bottom: 5px;
         }
     </style>
 """, unsafe_allow_html=True)
 
 # --- WEB UI ---
 st.title("🇬🇹 MAGA: Procesador de Facturas por la LAE")
-uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True,
-                                 help='Arrastre y suelte sus facturas aquí. El límite es 200mb por archivo')
-uploaded_xlsx = st.file_uploader(label='2. Seleccione su Archivo de Excel', type='xlsx',
-                                 help='Arrastre y suelte el archivo de Excel dónde van los totales de las facturas')
+uploaded_pdfs = st.file_uploader(label='1. Seleccione sus Facturas (PDFs)', type='pdf', accept_multiple_files=True)
+uploaded_xlsx = st.file_uploader(label='2. Seleccione su Archivo de Excel', type='xlsx')
 
 if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
     try:
@@ -68,36 +81,24 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         wb = openpyxl.load_workbook(input_buffer)
         ws = wb.active 
         
-        # 1. Setup "Extra Detalles" Sheet
+        # 1. Setup "Extra Detalles"
         if "Extra Detalles" not in wb.sheetnames:
             ws_det = wb.create_sheet("Extra Detalles")
             ws_det.append(['Nombre Emisor', 'NIT Emisor', 'NIT Receptor', 'UUID', 'Municipio', 'Alerta % Abarrotes'])
         else:
             ws_det = wb["Extra Detalles"]
 
-        # 2. Gather previously processed UUIDs (safely ignoring headers)
-        processed_uuids = set()
-        for row in ws_det.iter_rows(min_row=2, min_col=4, max_col=4, values_only=True):
-            if row[0] and str(row[0]).strip() != 'UUID': 
-                processed_uuids.add(str(row[0]).strip())
-
-        # 3. Map Excel Columns
+        # 2. Map Excel Columns (100% dynamic)
         col_map = {}
         for row in ws.iter_rows(min_row=1, max_row=15): 
             for cell in row:
                 if not cell.value: continue
                 val = normalize_text(str(cell.value))
-                
                 if 'abarrotes' in val: col_map['abar'] = cell.column
                 if 'agricultura' in val: col_map['agri'] = cell.column
                 if 'escuela' in val or 'establecimiento' in val: col_map['escuelas'] = cell.column
-                
-                # Logic for merged Proveedores header: finds the "Total" sub-column underneath
                 if 'proveedor' in val or 'productor' in val:
-                    base_col = cell.column
-                    base_row = cell.row
-                    found_total = False
-                    
+                    base_col, base_row, found_total = cell.column, cell.row, False
                     for r_offset in range(1, 4):
                         for c_offset in range(3):
                             sub_cell = ws.cell(row=base_row + r_offset, column=base_col + c_offset)
@@ -106,24 +107,33 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                                 found_total = True
                                 break
                         if found_total: break
-                    
-                    if 'productores' not in col_map:
-                        col_map['productores'] = base_col
+                    if 'productores' not in col_map: col_map['productores'] = base_col
 
         if 'abar' not in col_map or 'agri' not in col_map:
-            st.error(f"No encontré las columnas base en el Excel. Columnas detectadas: {col_map}")
+            st.error(f"No encontré las columnas base en el Excel.")
             st.stop()
 
-        muni_map = {'totonicapan, totonicapan': 1, 'totonicapan': 1, 'san cristobal totonicapan': 2, 
-                    'san francisco el alto': 3, 'san andres xecul': 4, 'momostenango': 5, 
-                    'santa maria chiquimula': 6, 'santa lucia la reforma': 7, 'san bartolo': 8}
+        muni_map = {'totonicapan': 1, 'san cristobal totonicapan': 2, 'san francisco el alto': 3, 
+                    'san andres xecul': 4, 'momostenango': 5, 'santa maria chiquimula': 6, 
+                    'santa lucia la reforma': 7, 'san bartolo': 8}
         
-        # Sort municipalities by string length so it matches longest names (Santa Lucia) before short ones (Totonicapan)
+        # Sort by longest name to prevent "Santa Lucia La Reforma, Totonicapan" matching "Totonicapan" first
         sorted_munis = sorted(muni_map.items(), key=lambda x: len(x[0]), reverse=True)
+
+        # 3. Map Excel Rows to Municipalities (NEW: Bulletproof Row Finder)
+        row_map = {}
+        for row_ex in ws.iter_rows(min_row=1, max_row=150):
+            row_str = " ".join([normalize_text(str(cell.value)) for cell in row_ex if cell.value])
+            row_squished = re.sub(r'[\s,]+', '', row_str)
+            for k, v in sorted_munis:
+                if v in row_map: continue 
+                key_squished = re.sub(r'[\s,]+', '', k)
+                if key_squished in row_squished:
+                    row_map[v] = row_ex[0].row
+                    break
 
         batch_totals = {m_id: {'abar': 0.0, 'agri': 0.0, 'emisores': set(), 'receptores': set()} for m_id in muni_map.values()}
         new_count = 0
-        skipped_count = 0
         progress_bar = st.progress(0)
 
         # 4. Process each PDF
@@ -135,34 +145,22 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     t = p.extract_table()
                     if t: tables.extend(t)
 
-                # Strict Regex to ensure we don't accidentally grab a non-UUID number
                 uuid_m = re.search(r'\b[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\b', text, re.I)
                 uuid_val = uuid_m.group(0).upper() if uuid_m else pdf_file.name
 
-                if uuid_val in processed_uuids: 
-                    st.info(f"⏭️ Factura omitida (ya sumada anteriormente): {pdf_file.name}")
-                    skipped_count += 1
-                    continue
-
-                # Completely crush all text spaces, newlines, and commas for a 100% reliable municipality match
                 text_squished = re.sub(r'[\s,]+', '', normalize_text(text))
-                
-                m_id = None
-                m_name = "N/A"
+                m_id, m_name = None, "N/A"
                 for k, v in sorted_munis:
                     key_squished = re.sub(r'[\s,]+', '', normalize_text(k))
                     if key_squished in text_squished:
-                        m_id = v
-                        m_name = k
+                        m_id, m_name = v, k
                         break
 
                 if m_id:
                     abar_sum, agri_sum = 0, 0
-                    
-                    # Expanded lists to ensure everything you process gets categorized
                     cultivados = ['tomate', 'pina', 'piña', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 
                                   'miltomate', 'brocoli', 'melon', 'melón', 'ejote', 'maiz', 'maíz', 'jamaica', 
-                                  'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro']
+                                  'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro', 'tusa']
                     abarrotes = ['pollo', 'tostada', 'huevo', 'pan']
                     
                     total_col_idx = -1
@@ -177,29 +175,18 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     for row_tbl in tables:
                         if not row_tbl: continue
                         row_text = " ".join([normalize_text(str(x)) for x in row_tbl if x])
-                        
-                        val = 0.0
-                        if total_col_idx != -1 and len(row_tbl) > total_col_idx:
-                            val = clean_currency(row_tbl[total_col_idx])
-                        else:
-                            if len(row_tbl) >= 8: val = clean_currency(row_tbl[7])
-                            elif len(row_tbl) >= 7: val = clean_currency(row_tbl[6])
-                            elif len(row_tbl) >= 4: val = clean_currency(row_tbl[-1]) 
+                        val = extract_value_from_row(row_tbl, total_col_idx)
                             
                         if any(x in row_text for x in cultivados): agri_sum += val
                         if any(x in row_text for x in abarrotes): abar_sum += val
                     
                     nit_e_match = re.search(r'Emisor:\s*([0-9Kk\-]+)', text, re.I)
                     nit_r_match = re.search(r'Receptor:\s*([0-9Kk\-]+)', text, re.I)
-                    
-                    # DOTALL added here to fix issues where the name spills onto the next line
                     name_e_match = re.search(r'(?:Factura(?:\s*Pequeño\s*Contribuyente)?)\s*\n+(.*?)\n+Nit\s*Emisor', text, re.IGNORECASE | re.DOTALL)
                     
                     nit_e = nit_e_match.group(1).strip() if nit_e_match else "N/A"
                     nit_r = nit_r_match.group(1).strip() if nit_r_match else "N/A"
-                    
-                    raw_name = name_e_match.group(1).strip() if name_e_match else "N/A"
-                    raw_name = re.sub(r'\s+', ' ', raw_name) # Clean up messy line breaks in name
+                    raw_name = re.sub(r'\s+', ' ', name_e_match.group(1).strip() if name_e_match else "N/A")
                     name_e = re.split(r'(?i)n[úu]mero\s*de\s*autorizaci[óo]n', raw_name)[0]
                     name_e = re.split(r'(?i)\bserie\b', name_e)[0].strip()
 
@@ -213,69 +200,49 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
 
                     ws_det.append([name_e, nit_e, nit_r, uuid_val, m_name, alert_status])
-                    processed_uuids.add(uuid_val)
                     new_count += 1
                 else:
                     st.warning(f"No se pudo identificar el municipio en la factura: {pdf_file.name}")
 
             progress_bar.progress((i + 1) / len(uploaded_pdfs))
 
-        # 5. Write accumulated data to Main Sheet safely
-        for row_ex in ws.iter_rows(min_row=1, max_row=200):
-            cell_a_val = str(row_ex[0].value).strip() if row_ex[0].value is not None else ""
-            if not cell_a_val: continue
+        # 5. Write to Main Sheet (Directly hitting the mapped rows)
+        for target_m_id, r_idx in row_map.items():
+            data = batch_totals.get(target_m_id)
+            if not data: continue
 
-            try:
-                excel_m_id = int(float(cell_a_val))
-                if excel_m_id in batch_totals:
-                    r_idx = row_ex[0].row
-                    data = batch_totals[excel_m_id]
+            if 'abar' in col_map and data['abar'] > 0:
+                curr = ws.cell(r_idx, col_map['abar']).value
+                ws.cell(r_idx, col_map['abar']).value = safe_float(curr) + data['abar']
+            
+            if 'agri' in col_map and data['agri'] > 0:
+                curr = ws.cell(r_idx, col_map['agri']).value
+                ws.cell(r_idx, col_map['agri']).value = safe_float(curr) + data['agri']
 
-                    # Uses the new safe_float() to guarantee it can add to the existing cell format
-                    if 'abar' in col_map and data['abar'] > 0:
-                        curr_abar = ws.cell(r_idx, col_map['abar']).value
-                        ws.cell(r_idx, col_map['abar']).value = safe_float(curr_abar) + data['abar']
-                    
-                    if 'agri' in col_map and data['agri'] > 0:
-                        curr_agri = ws.cell(r_idx, col_map['agri']).value
-                        ws.cell(r_idx, col_map['agri']).value = safe_float(curr_agri) + data['agri']
+            if 'escuelas' in col_map and len(data['receptores']) > 0:
+                curr = ws.cell(r_idx, col_map['escuelas']).value
+                ws.cell(r_idx, col_map['escuelas']).value = int(safe_float(curr)) + len(data['receptores'])
+            
+            if 'productores' in col_map and len(data['emisores']) > 0:
+                curr = ws.cell(r_idx, col_map['productores']).value
+                ws.cell(r_idx, col_map['productores']).value = int(safe_float(curr)) + len(data['emisores'])
 
-                    if 'escuelas' in col_map and len(data['receptores']) > 0:
-                        curr_esc = ws.cell(r_idx, col_map['escuelas']).value
-                        ws.cell(r_idx, col_map['escuelas']).value = int(safe_float(curr_esc)) + len(data['receptores'])
-                    
-                    if 'productores' in col_map and len(data['emisores']) > 0:
-                        curr_prod = ws.cell(r_idx, col_map['productores']).value
-                        ws.cell(r_idx, col_map['productores']).value = int(safe_float(curr_prod)) + len(data['emisores'])
-
-            except (ValueError, TypeError):
-                continue
-
-        # 6. Format "Extra Detalles" (Auto-width and Borders)
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
-                             top=Side(style='thin'), bottom=Side(style='thin'))
-
+        # 6. Format "Extra Detalles"
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
         for col in ws_det.columns:
             max_length = 0
             col_letter = get_column_letter(col[0].column) 
-            
             for cell in col:
                 cell.border = thin_border 
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
+                try: max_length = max(max_length, len(str(cell.value)))
+                except: pass
             ws_det.column_dimensions[col_letter].width = max_length + 2
 
         # 7. Final Export
         output = io.BytesIO()
         wb.save(output)
         
-        st.success(f"¡Proceso completado! {new_count} facturas nuevas procesadas y agregadas al Excel.")
-        if skipped_count > 0:
-            st.info(f"Nota: Se saltaron {skipped_count} facturas porque ya estaban registradas en el Excel.")
-            
+        st.success(f"¡Proceso completado! {new_count} facturas procesadas y agregadas al Excel con éxito.")
         output.seek(0)
         st.download_button("Descargar Reporte Final", data=output.getvalue(), 
                            file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
