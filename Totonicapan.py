@@ -13,6 +13,12 @@ def normalize_text(text):
     nfd = unicodedata.normalize('NFD', str(text))
     return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn').lower()
 
+def squish_text(text):
+    """Aggressively removes ALL spaces, punctuation, hyphens, and hidden characters for a 100% reliable match."""
+    if not text: return ""
+    t = normalize_text(text)
+    return re.sub(r'[^a-z0-9]', '', t)
+
 def safe_float(val):
     if val is None: return 0.0
     s = str(val).strip()
@@ -116,24 +122,26 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             st.error(f"No encontré las columnas base en el Excel.")
             st.stop()
 
-        # 2. MASTER MUNICIPALITY DICTIONARY (Splits Search Aliases from Display Names)
+        # 2. MASTER MUNICIPALITY DICTIONARY
         MUNICIPIOS = {
             1: {"nombre_oficial": "Totonicapán", "alias_pdf": ["totonicapan totonicapan", "totonicapan, totonicapan", "totonicapan"]},
             2: {"nombre_oficial": "San Cristóbal Totonicapán", "alias_pdf": ["san cristobal totonicapan", "san cristobal"]},
             3: {"nombre_oficial": "San Francisco El Alto", "alias_pdf": ["san francisco el alto", "san francisco"]},
             4: {"nombre_oficial": "San Andrés Xecul", "alias_pdf": ["san andres xecul", "san andres"]},
             5: {"nombre_oficial": "Momostenango", "alias_pdf": ["momostenango"]},
-            6: {"nombre_oficial": "Santa María Chiquimula", "alias_pdf": ["santa maria chiquimula", "sta maria chiquimula"]},
-            7: {"nombre_oficial": "Santa Lucía La Reforma", "alias_pdf": ["santa lucia la reforma", "sta lucia la reforma"]},
+            6: {"nombre_oficial": "Santa María Chiquimula", "alias_pdf": ["santa maria chiquimula", "sta maria chiquimula", "santa maria", "sta maria"]},
+            7: {"nombre_oficial": "Santa Lucía La Reforma", "alias_pdf": ["santa lucia la reforma", "sta lucia la reforma", "santa lucia", "sta lucia"]},
             8: {"nombre_oficial": "San Bartolo Aguas Calientes", "alias_pdf": ["san bartolo aguas calientes", "san bartolo"]}
         }
         
-        # Build a flat list of aliases sorted by length so exact matches always trigger first
         search_list = []
         for m_id, data in MUNICIPIOS.items():
             for alias in data["alias_pdf"]:
                 search_list.append((alias, m_id, data["nombre_oficial"]))
-        search_list.sort(key=lambda x: len(x[0]), reverse=True)
+                
+        # CORE FIX: Sorts the list so Totonicapán (ID 1) is ALWAYS evaluated last.
+        # Within the other municipalities, sorts by length to catch specific names first.
+        search_list.sort(key=lambda x: (x[1] == 1, -len(x[0])))
 
         EXCEL_MAPPINGS = {
             1: "totonicapán", 2: "san cristobal", 3: "san francisco", 4: "san andres",
@@ -143,11 +151,11 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         # 3. Map Excel Rows to Municipalities
         row_map = {}
         for row_ex in ws.iter_rows(min_row=5, max_row=150):
-            row_text = normalize_text(" ".join([str(c.value) for c in row_ex if c.value and type(c).__name__ != 'MergedCell']))
-            row_squished = re.sub(r'[\s,]+', '', row_text)
+            row_text = " ".join([str(c.value) for c in row_ex if c.value and type(c).__name__ != 'MergedCell'])
+            row_squished = squish_text(row_text)
             for m_id, search_key in EXCEL_MAPPINGS.items():
                 if m_id in row_map: continue
-                key_squished = re.sub(r'[\s,]+', '', normalize_text(search_key))
+                key_squished = squish_text(search_key)
                 if key_squished in row_squished:
                     row_map[m_id] = row_ex[0].row
 
@@ -167,12 +175,12 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                 uuid_m = re.search(r'\b[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\b', text, re.I)
                 uuid_val = uuid_m.group(0).upper() if uuid_m else pdf_file.name
 
-                text_squished = re.sub(r'[\s,]+', '', normalize_text(text))
+                text_squished = squish_text(text)
                 m_id, m_name = None, "N/A"
                 
-                # Check against our sorted master list of aliases
+                # Check against our aggressively squished master list
                 for alias, mun_id, official_name in search_list:
-                    alias_squished = re.sub(r'[\s,]+', '', normalize_text(alias))
+                    alias_squished = squish_text(alias)
                     if alias_squished in text_squished:
                         m_id = mun_id
                         m_name = official_name
@@ -221,7 +229,6 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
                     alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
 
-                    # Now appends the beautiful 'Official Name' to the sheet instead of the lowercase search alias
                     ws_det.append([name_e, nit_e, nit_r, uuid_val, m_name, alert_status])
                     new_count += 1
                 else:
