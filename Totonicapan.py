@@ -33,14 +33,12 @@ def clean_currency(value):
     raw = re.sub(r'[^\d\.,]', '', raw)
     if not raw: return 0.0
     
-    # Catch comma-as-decimal (e.g. 225,00)
     if re.search(r',\d{1,2}$', raw):
         parts = raw.rsplit(',', 1)
         raw = parts[0].replace('.', '').replace(',', '') + '.' + parts[1]
     else:
         raw = raw.replace(',', '')
         
-    # Catch double periods (e.g. 8.986.00)
     if raw.count('.') > 1:
         parts = raw.rsplit('.', 1)
         raw = parts[0].replace('.', '') + '.' + parts[1]
@@ -53,11 +51,19 @@ def extract_value_from_row(row_list, total_idx):
     if total_idx != -1 and len(row_list) > total_idx:
         val = clean_currency(row_list[total_idx])
         if val > 0: return val
-    # Fallback: scan backwards from the right side of the table
     for item in reversed(row_list):
         val = clean_currency(item)
         if val > 0: return val
     return 0.0
+
+def get_master_cell(ws, r_idx, c_idx):
+    """If the target cell is a read-only MergedCell, redirects to the writable master cell."""
+    cell = ws.cell(row=r_idx, column=c_idx)
+    if type(cell).__name__ == 'MergedCell':
+        for m_range in ws.merged_cells.ranges:
+            if cell.coordinate in m_range:
+                return ws.cell(row=m_range.min_row, column=m_range.min_col)
+    return cell
 
 # --- TRUCO CSS PARA TRADUCIR LA INTERFAZ A ESPAÑOL ---
 st.markdown("""
@@ -92,8 +98,10 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         col_map = {}
         for row in ws.iter_rows(min_row=1, max_row=15): 
             for cell in row:
+                if type(cell).__name__ == 'MergedCell': continue # Skip reading merged sub-cells
                 if not cell.value: continue
                 val = normalize_text(str(cell.value))
+                
                 if 'abarrotes' in val: col_map['abar'] = cell.column
                 if 'agricultura' in val: col_map['agri'] = cell.column
                 if 'escuela' in val or 'establecimiento' in val: col_map['escuelas'] = cell.column
@@ -117,13 +125,13 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     'san andres xecul': 4, 'momostenango': 5, 'santa maria chiquimula': 6, 
                     'santa lucia la reforma': 7, 'san bartolo': 8}
         
-        # Sort by longest name to prevent "Santa Lucia La Reforma, Totonicapan" matching "Totonicapan" first
         sorted_munis = sorted(muni_map.items(), key=lambda x: len(x[0]), reverse=True)
 
-        # 3. Map Excel Rows to Municipalities (NEW: Bulletproof Row Finder)
+        # 3. Map Excel Rows to Municipalities
         row_map = {}
         for row_ex in ws.iter_rows(min_row=1, max_row=150):
-            row_str = " ".join([normalize_text(str(cell.value)) for cell in row_ex if cell.value])
+            # Read only the master cells to avoid NoneType errors on MergedCells
+            row_str = " ".join([normalize_text(str(cell.value)) for cell in row_ex if cell.value and type(cell).__name__ != 'MergedCell'])
             row_squished = re.sub(r'[\s,]+', '', row_str)
             for k, v in sorted_munis:
                 if v in row_map: continue 
@@ -161,7 +169,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     cultivados = ['tomate', 'pina', 'piña', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 
                                   'miltomate', 'brocoli', 'melon', 'melón', 'ejote', 'maiz', 'maíz', 'jamaica', 
                                   'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro', 'tusa']
-                    abarrotes = ['pollo', 'tostada', 'huevo', 'pan']
+                    abarrotes = ['pollo', 'tostada', 'huevo', 'pan', 'queso']
                     
                     total_col_idx = -1
                     for row_tbl in tables:
@@ -206,26 +214,26 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
             progress_bar.progress((i + 1) / len(uploaded_pdfs))
 
-        # 5. Write to Main Sheet (Directly hitting the mapped rows)
+        # 5. Write to Main Sheet (Safely writing to master cells to avoid Read-Only errors)
         for target_m_id, r_idx in row_map.items():
             data = batch_totals.get(target_m_id)
             if not data: continue
 
             if 'abar' in col_map and data['abar'] > 0:
-                curr = ws.cell(r_idx, col_map['abar']).value
-                ws.cell(r_idx, col_map['abar']).value = safe_float(curr) + data['abar']
+                target_cell = get_master_cell(ws, r_idx, col_map['abar'])
+                target_cell.value = safe_float(target_cell.value) + data['abar']
             
             if 'agri' in col_map and data['agri'] > 0:
-                curr = ws.cell(r_idx, col_map['agri']).value
-                ws.cell(r_idx, col_map['agri']).value = safe_float(curr) + data['agri']
+                target_cell = get_master_cell(ws, r_idx, col_map['agri'])
+                target_cell.value = safe_float(target_cell.value) + data['agri']
 
             if 'escuelas' in col_map and len(data['receptores']) > 0:
-                curr = ws.cell(r_idx, col_map['escuelas']).value
-                ws.cell(r_idx, col_map['escuelas']).value = int(safe_float(curr)) + len(data['receptores'])
+                target_cell = get_master_cell(ws, r_idx, col_map['escuelas'])
+                target_cell.value = int(safe_float(target_cell.value)) + len(data['receptores'])
             
             if 'productores' in col_map and len(data['emisores']) > 0:
-                curr = ws.cell(r_idx, col_map['productores']).value
-                ws.cell(r_idx, col_map['productores']).value = int(safe_float(curr)) + len(data['emisores'])
+                target_cell = get_master_cell(ws, r_idx, col_map['productores'])
+                target_cell.value = int(safe_float(target_cell.value)) + len(data['emisores'])
 
         # 6. Format "Extra Detalles"
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
