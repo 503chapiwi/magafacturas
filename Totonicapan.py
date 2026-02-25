@@ -169,4 +169,98 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                         else:
                             if len(row_tbl) >= 8: val = clean_currency(row_tbl[7])
                             elif len(row_tbl) >= 7: val = clean_currency(row_tbl[6])
-                            elif
+                            elif len(row_tbl) >= 4: val = clean_currency(row_tbl[-1]) 
+                            
+                        if any(x in row_text for x in cultivados): agri_sum += val
+                        if any(x in row_text for x in abarrotes): abar_sum += val
+                    
+                    nit_e_match = re.search(r'Emisor:\s*([0-9Kk\-]+)', text, re.I)
+                    nit_r_match = re.search(r'Receptor:\s*([0-9Kk\-]+)', text, re.I)
+                    name_e_match = re.search(r'(?:Factura(?:\s*Pequeño\s*Contribuyente)?)\s*\n+(.*?)\n+Nit\s*Emisor', text, re.IGNORECASE)
+                    
+                    nit_e = nit_e_match.group(1).strip() if nit_e_match else "N/A"
+                    nit_r = nit_r_match.group(1).strip() if nit_r_match else "N/A"
+                    
+                    raw_name = name_e_match.group(1).strip() if name_e_match else "N/A"
+                    name_e = re.split(r'(?i)n[úu]mero\s*de\s*autorizaci[óo]n', raw_name)[0]
+                    name_e = re.split(r'(?i)\bserie\b', name_e)[0].strip()
+
+                    batch_totals[m_id]['abar'] += abar_sum
+                    batch_totals[m_id]['agri'] += agri_sum
+                    if nit_e != "N/A": batch_totals[m_id]['emisores'].add(nit_e)
+                    if nit_r != "N/A": batch_totals[m_id]['receptores'].add(nit_r)
+
+                    total_rec = abar_sum + agri_sum
+                    perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
+                    alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
+
+                    ws_det.append([name_e, nit_e, nit_r, uuid_val, m_name, alert_status])
+                    processed_uuids.add(uuid_val)
+                    new_count += 1
+                else:
+                    st.warning(f"No se pudo identificar el municipio en la factura: {pdf_file.name}")
+
+            progress_bar.progress((i + 1) / len(uploaded_pdfs))
+
+        # 5. Write accumulated data to Main Sheet
+        for row_ex in ws.iter_rows(min_row=1, max_row=200):
+            cell_a_val = str(row_ex[0].value).strip() if row_ex[0].value is not None else ""
+            if not cell_a_val: continue
+
+            try:
+                excel_m_id = int(float(cell_a_val))
+                if excel_m_id in batch_totals:
+                    r_idx = row_ex[0].row
+                    data = batch_totals[excel_m_id]
+
+                    if 'abar' in col_map:
+                        curr_abar = ws.cell(r_idx, col_map['abar']).value
+                        ws.cell(r_idx, col_map['abar']).value = (float(curr_abar) if curr_abar else 0.0) + data['abar']
+                    
+                    if 'agri' in col_map:
+                        curr_agri = ws.cell(r_idx, col_map['agri']).value
+                        ws.cell(r_idx, col_map['agri']).value = (float(curr_agri) if curr_agri else 0.0) + data['agri']
+
+                    if 'escuelas' in col_map:
+                        curr_esc = ws.cell(r_idx, col_map['escuelas']).value
+                        ws.cell(r_idx, col_map['escuelas']).value = (int(curr_esc) if curr_esc else 0) + len(data['receptores'])
+                    
+                    if 'productores' in col_map:
+                        curr_prod = ws.cell(r_idx, col_map['productores']).value
+                        ws.cell(r_idx, col_map['productores']).value = (int(curr_prod) if curr_prod else 0) + len(data['emisores'])
+
+            except (ValueError, TypeError):
+                continue
+
+        # 6. Format "Extra Detalles" (Auto-width and Borders)
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                             top=Side(style='thin'), bottom=Side(style='thin'))
+
+        for col in ws_det.columns:
+            max_length = 0
+            col_letter = get_column_letter(col[0].column) 
+            
+            for cell in col:
+                cell.border = thin_border 
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            ws_det.column_dimensions[col_letter].width = max_length + 2
+
+        # 7. Final Export
+        output = io.BytesIO()
+        wb.save(output)
+        
+        # Show final success message detailing exactly what happened
+        st.success(f"¡Proceso completado! {new_count} facturas nuevas agregadas al Excel.")
+        if skipped_count > 0:
+            st.info(f"Nota: Se saltaron {skipped_count} facturas porque ya estaban registradas en este archivo Excel.")
+            
+        output.seek(0)
+        st.download_button("Descargar Reporte Final", data=output.getvalue(), 
+                           file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    except Exception as e:
+        st.error(f"Error detectado: {e}")
