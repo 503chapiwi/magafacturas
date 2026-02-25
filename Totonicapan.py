@@ -14,7 +14,6 @@ def normalize_text(text):
     return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn').lower()
 
 def safe_float(val):
-    """Aggressively strips 'Q', spaces, and dashes from Excel cells to prevent math crashes."""
     if val is None: return 0.0
     s = str(val).strip()
     if not s or s == '-': return 0.0
@@ -27,7 +26,6 @@ def safe_float(val):
     except ValueError: return 0.0
 
 def clean_currency(value):
-    """Advanced parser for PDF OCR errors like '8.986.00' or '225,00'."""
     if not value: return 0.0
     raw = str(value).strip().replace(' ', '')
     raw = re.sub(r'[^\d\.,]', '', raw)
@@ -47,7 +45,6 @@ def clean_currency(value):
     except ValueError: return 0.0
 
 def extract_value_from_row(row_list, total_idx):
-    """Safely extracts the price from a row, with fallbacks if columns are shifted."""
     if total_idx != -1 and len(row_list) > total_idx:
         val = clean_currency(row_list[total_idx])
         if val > 0: return val
@@ -57,7 +54,6 @@ def extract_value_from_row(row_list, total_idx):
     return 0.0
 
 def get_master_cell(ws, r_idx, c_idx):
-    """If the target cell is a read-only MergedCell, redirects to the writable master cell."""
     cell = ws.cell(row=r_idx, column=c_idx)
     if type(cell).__name__ == 'MergedCell':
         for m_range in ws.merged_cells.ranges:
@@ -87,18 +83,17 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         wb = openpyxl.load_workbook(input_buffer)
         ws = wb.active 
         
-        # 1. Setup "Extra Detalles"
         if "Extra Detalles" not in wb.sheetnames:
             ws_det = wb.create_sheet("Extra Detalles")
             ws_det.append(['Nombre Emisor', 'NIT Emisor', 'NIT Receptor', 'UUID', 'Municipio', 'Alerta % Abarrotes'])
         else:
             ws_det = wb["Extra Detalles"]
 
-        # 2. Map Excel Columns (100% dynamic)
+        # 1. Map Excel Columns dynamically
         col_map = {}
         for row in ws.iter_rows(min_row=1, max_row=15): 
             for cell in row:
-                if type(cell).__name__ == 'MergedCell': continue # Skip reading merged sub-cells
+                if type(cell).__name__ == 'MergedCell': continue
                 if not cell.value: continue
                 val = normalize_text(str(cell.value))
                 
@@ -121,26 +116,42 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             st.error(f"No encontré las columnas base en el Excel.")
             st.stop()
 
-        muni_map = {'totonicapan': 1, 'san cristobal totonicapan': 2, 'san francisco el alto': 3, 
-                    'san andres xecul': 4, 'momostenango': 5, 'santa maria chiquimula': 6, 
-                    'santa lucia la reforma': 7, 'san bartolo': 8}
+        # 2. MASTER MUNICIPALITY DICTIONARY (Splits Search Aliases from Display Names)
+        MUNICIPIOS = {
+            1: {"nombre_oficial": "Totonicapán", "alias_pdf": ["totonicapan totonicapan", "totonicapan, totonicapan", "totonicapan"]},
+            2: {"nombre_oficial": "San Cristóbal Totonicapán", "alias_pdf": ["san cristobal totonicapan", "san cristobal"]},
+            3: {"nombre_oficial": "San Francisco El Alto", "alias_pdf": ["san francisco el alto", "san francisco"]},
+            4: {"nombre_oficial": "San Andrés Xecul", "alias_pdf": ["san andres xecul", "san andres"]},
+            5: {"nombre_oficial": "Momostenango", "alias_pdf": ["momostenango"]},
+            6: {"nombre_oficial": "Santa María Chiquimula", "alias_pdf": ["santa maria chiquimula", "sta maria chiquimula"]},
+            7: {"nombre_oficial": "Santa Lucía La Reforma", "alias_pdf": ["santa lucia la reforma", "sta lucia la reforma"]},
+            8: {"nombre_oficial": "San Bartolo Aguas Calientes", "alias_pdf": ["san bartolo aguas calientes", "san bartolo"]}
+        }
         
-        sorted_munis = sorted(muni_map.items(), key=lambda x: len(x[0]), reverse=True)
+        # Build a flat list of aliases sorted by length so exact matches always trigger first
+        search_list = []
+        for m_id, data in MUNICIPIOS.items():
+            for alias in data["alias_pdf"]:
+                search_list.append((alias, m_id, data["nombre_oficial"]))
+        search_list.sort(key=lambda x: len(x[0]), reverse=True)
+
+        EXCEL_MAPPINGS = {
+            1: "totonicapán", 2: "san cristobal", 3: "san francisco", 4: "san andres",
+            5: "momostenango", 6: "santa maria", 7: "santa lucia", 8: "san bartolo"
+        }
 
         # 3. Map Excel Rows to Municipalities
         row_map = {}
-        for row_ex in ws.iter_rows(min_row=1, max_row=150):
-            # Read only the master cells to avoid NoneType errors on MergedCells
-            row_str = " ".join([normalize_text(str(cell.value)) for cell in row_ex if cell.value and type(cell).__name__ != 'MergedCell'])
-            row_squished = re.sub(r'[\s,]+', '', row_str)
-            for k, v in sorted_munis:
-                if v in row_map: continue 
-                key_squished = re.sub(r'[\s,]+', '', k)
+        for row_ex in ws.iter_rows(min_row=5, max_row=150):
+            row_text = normalize_text(" ".join([str(c.value) for c in row_ex if c.value and type(c).__name__ != 'MergedCell']))
+            row_squished = re.sub(r'[\s,]+', '', row_text)
+            for m_id, search_key in EXCEL_MAPPINGS.items():
+                if m_id in row_map: continue
+                key_squished = re.sub(r'[\s,]+', '', normalize_text(search_key))
                 if key_squished in row_squished:
-                    row_map[v] = row_ex[0].row
-                    break
+                    row_map[m_id] = row_ex[0].row
 
-        batch_totals = {m_id: {'abar': 0.0, 'agri': 0.0, 'emisores': set(), 'receptores': set()} for m_id in muni_map.values()}
+        batch_totals = {m_id: {'abar': 0.0, 'agri': 0.0, 'emisores': set(), 'receptores': set()} for m_id in MUNICIPIOS.keys()}
         new_count = 0
         progress_bar = st.progress(0)
 
@@ -158,18 +169,21 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
                 text_squished = re.sub(r'[\s,]+', '', normalize_text(text))
                 m_id, m_name = None, "N/A"
-                for k, v in sorted_munis:
-                    key_squished = re.sub(r'[\s,]+', '', normalize_text(k))
-                    if key_squished in text_squished:
-                        m_id, m_name = v, k
+                
+                # Check against our sorted master list of aliases
+                for alias, mun_id, official_name in search_list:
+                    alias_squished = re.sub(r'[\s,]+', '', normalize_text(alias))
+                    if alias_squished in text_squished:
+                        m_id = mun_id
+                        m_name = official_name
                         break
 
                 if m_id:
                     abar_sum, agri_sum = 0, 0
                     cultivados = ['tomate', 'pina', 'piña', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 
                                   'miltomate', 'brocoli', 'melon', 'melón', 'ejote', 'maiz', 'maíz', 'jamaica', 
-                                  'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro', 'tusa']
-                    abarrotes = ['pollo', 'tostada', 'huevo', 'pan', 'queso']
+                                  'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro', 'tusa', 'sandia', 'sandía']
+                    abarrotes = ['pollo', 'tostada', 'huevo', 'pan', 'queso', 'carne', 'res']
                     
                     total_col_idx = -1
                     for row_tbl in tables:
@@ -207,6 +221,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                     perc_abar = (abar_sum / total_rec) if total_rec > 0 else 0
                     alert_status = "⚠️ ALERTA: >30%" if perc_abar > 0.30 else "OK"
 
+                    # Now appends the beautiful 'Official Name' to the sheet instead of the lowercase search alias
                     ws_det.append([name_e, nit_e, nit_r, uuid_val, m_name, alert_status])
                     new_count += 1
                 else:
@@ -214,7 +229,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
             progress_bar.progress((i + 1) / len(uploaded_pdfs))
 
-        # 5. Write to Main Sheet (Safely writing to master cells to avoid Read-Only errors)
+        # 5. Write to Main Sheet securely
         for target_m_id, r_idx in row_map.items():
             data = batch_totals.get(target_m_id)
             if not data: continue
