@@ -122,6 +122,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             st.error(f"No encontré las columnas base en el Excel.")
             st.stop()
 
+        department_name = 'totonicapan'
         # 2. MASTER MUNICIPALITY DICTIONARY
         MUNICIPIOS = {
             1: {"nombre_oficial": "Totonicapán", "alias_pdf": ["totonicapan totonicapan", "totonicapan, totonicapan", "totonicapan"]},
@@ -141,8 +142,11 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                 
         # CORE FIX: Sorts the list so Totonicapán (ID 1) is ALWAYS evaluated last.
         # Within the other municipalities, sorts by length to catch specific names first.
-        search_list.sort(key=lambda x: (x[1] == 1, -len(x[0])))
-
+                search_list.sort(key=lambda x: (
+            squish_text(x[2]) == squish_text(DEPARTMENT_NAME),
+            -len(x[0])
+        ))
+        
         EXCEL_MAPPINGS = {
             1: "totonicapán", 2: "san cristobal", 3: "san francisco", 4: "san andres",
             5: "momostenango", 6: "santa maria", 7: "santa lucia", 8: "san bartolo"
