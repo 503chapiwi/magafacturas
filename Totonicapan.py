@@ -143,7 +143,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
         # CORE FIX: Sorts the list so Totonicapán (ID 1) is ALWAYS evaluated last.
         # Within the other municipalities, sorts by length to catch specific names first.
                 search_list.sort(key=lambda x: (
-            squish_text(x[2]) == squish_text(DEPARTMENT_NAME),
+            squish_text(x[2]) == squish_text(department_name),
             -len(x[0])
         ))
         
