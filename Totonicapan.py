@@ -6,6 +6,7 @@ import unicodedata
 import streamlit as st
 import re
 import io
+from rapidfuzz import fuzz, process
 
 # --- HELPER FUNCTIONS ---
 def normalize_text(text):
@@ -67,6 +68,63 @@ def get_master_cell(ws, r_idx, c_idx):
                 return ws.cell(row=m_range.min_row, column=m_range.min_col)
     return cell
 
+def fuzzy_match_category(description, cultivados, abarrotes, threshold=80):
+    """
+    Uses fuzzy matching to categorize a product description.
+    Returns: ('agricultura', best_match_word) or ('abarrotes', best_match_word) or ('unmatched', None)
+    """
+    if not description:
+        return ('unmatched', None)
+    
+    # Normalize and extract words from description
+    desc_normalized = normalize_text(description)
+    words = desc_normalized.split()
+    
+    # Try exact matches first (original logic)
+    for word in words:
+        if word in cultivados:
+            return ('agricultura', word)
+        if word in abarrotes:
+            return ('abarrotes', word)
+    
+    # If no exact match, try fuzzy matching
+    best_agri_match = None
+    best_agri_score = 0
+    
+    for word in words:
+        # Skip very short words (less than 3 chars) for fuzzy matching
+        if len(word) < 3:
+            continue
+            
+        # Check against cultivados
+        match_result = process.extractOne(word, cultivados, scorer=fuzz.ratio)
+        if match_result and match_result[1] >= threshold:
+            if match_result[1] > best_agri_score:
+                best_agri_score = match_result[1]
+                best_agri_match = match_result[0]
+    
+    best_abar_match = None
+    best_abar_score = 0
+    
+    for word in words:
+        if len(word) < 3:
+            continue
+            
+        # Check against abarrotes
+        match_result = process.extractOne(word, abarrotes, scorer=fuzz.ratio)
+        if match_result and match_result[1] >= threshold:
+            if match_result[1] > best_abar_score:
+                best_abar_score = match_result[1]
+                best_abar_match = match_result[0]
+    
+    # Return the category with the best match
+    if best_agri_score > best_abar_score and best_agri_match:
+        return ('agricultura', best_agri_match)
+    elif best_abar_match:
+        return ('abarrotes', best_abar_match)
+    else:
+        return ('unmatched', None)
+
 # --- TRUCO CSS PARA TRADUCIR LA INTERFAZ A ESPAÑOL ---
 st.markdown("""
     <style> 
@@ -92,6 +150,13 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
             ws_det.append(['Nombre Emisor', 'NIT Emisor', 'NIT Receptor', 'Num. DTE', 'Municipio', 'Alerta % Abarrotes'])
         else:
             ws_det = wb["Extra Detalles"]
+        
+        # Create sheet for unmatched items
+        if "Items Sin Clasificar" not in wb.sheetnames:
+            ws_unmatched = wb.create_sheet("Items Sin Clasificar")
+            ws_unmatched.append(['Descripción', 'Municipio', 'Total (Q)', 'Num. DTE'])
+        else:
+            ws_unmatched = wb["Items Sin Clasificar"]
 
         # 1. Map Excel Columns dynamically
         col_map = {}
@@ -190,10 +255,14 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
                 if m_id:
                     abar_sum, agri_sum = 0, 0
-                    cultivados = ['tomate', 'pina', 'piña', 'banano', 'zanahoria', 'guisquil', 'cebolla', 'aguacate', 
-                                  'miltomate', 'brocoli', 'melon', 'melón', 'ejote', 'maiz', 'maíz', 'jamaica', 
-                                  'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro', 'tusa', 'sandia', 'sandía']
-                    abarrotes = ['pollo', 'tostada', 'huevo', 'pan', 'queso', 'carne', 'res']
+                    cultivados = ['tomate', 'pina', 'piña', 'banano', 'zanahoria', 'guisquil', 'güisquil', 'cebolla', 'aguacate', 
+                                  'miltomate', 'brocoli', 'brócoli', 'melon', 'melón', 'ejote', 'maiz', 'maíz', 'jamaica', 
+                                  'cebada', 'papaya', 'manzana', 'chile', 'apio', 'ajo', 'cilantro', 'tusa', 'sandia', 'sandía',
+                                  'platano', 'plátano', 'naranja', 'limon', 'limón', 'lechuga', 'repollo', 'remolacha', 
+                                  'rabano', 'rábano', 'pimiento', 'berenjena', 'calabaza', 'pepino']
+                    abarrotes = ['pollo', 'tostada', 'huevo', 'pan', 'queso', 'carne', 'res', 'chowmein', 'chow mein', 
+                                 'chaomein', 'chaumein', 'cahomein', 'crema', 'leche', 'mantequilla', 'aceite', 'arroz',
+                                 'frijol', 'azucar', 'azúcar', 'sal', 'harina', 'pasta', 'fideos', 'atol', 'incaparina']
                     
                     total_col_idx = -1
                     for row_tbl in tables:
@@ -206,11 +275,23 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
 
                     for row_tbl in tables:
                         if not row_tbl: continue
-                        row_text = " ".join([normalize_text(str(x)) for x in row_tbl if x])
+                        row_text = " ".join([str(x) for x in row_tbl if x])
                         val = extract_value_from_row(row_tbl, total_col_idx)
-                            
-                        if any(x in row_text for x in cultivados): agri_sum += val
-                        if any(x in row_text for x in abarrotes): abar_sum += val
+                        
+                        # Skip rows with zero value
+                        if val <= 0:
+                            continue
+                        
+                        # Use fuzzy matching to categorize
+                        category, matched_word = fuzzy_match_category(row_text, cultivados, abarrotes, threshold=80)
+                        
+                        if category == 'agricultura':
+                            agri_sum += val
+                        elif category == 'abarrotes':
+                            abar_sum += val
+                        elif category == 'unmatched':
+                            # Add to unmatched items sheet for manual review
+                            ws_unmatched.append([row_text, m_name, val, dte_val])
                     
                     nit_e_match = re.search(r'Emisor:\s*([0-9Kk\-]+)', text, re.I)
                     nit_r_match = re.search(r'Receptor:\s*([0-9Kk\-]+)', text, re.I)
@@ -259,8 +340,10 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                 target_cell = get_master_cell(ws, r_idx, col_map['productores'])
                 target_cell.value = int(safe_float(target_cell.value)) + len(data['emisores'])
 
-        # 6. Format "Extra Detalles"
+        # 6. Format "Extra Detalles" and "Items Sin Clasificar"
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        
+        # Format Extra Detalles
         for col in ws_det.columns:
             max_length = 0
             col_letter = get_column_letter(col[0].column) 
@@ -269,12 +352,29 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx:
                 try: max_length = max(max_length, len(str(cell.value)))
                 except: pass
             ws_det.column_dimensions[col_letter].width = max_length + 2
+        
+        # Format Items Sin Clasificar
+        for col in ws_unmatched.columns:
+            max_length = 0
+            col_letter = get_column_letter(col[0].column) 
+            for cell in col:
+                cell.border = thin_border 
+                try: max_length = max(max_length, len(str(cell.value)))
+                except: pass
+            ws_unmatched.column_dimensions[col_letter].width = max_length + 2
 
         # 7. Final Export
         output = io.BytesIO()
         wb.save(output)
         
-        st.success(f"¡Proceso completado! {new_count} facturas procesadas y agregadas al Excel con éxito.")
+        # Count unmatched items (excluding header row)
+        unmatched_count = ws_unmatched.max_row - 1 if ws_unmatched.max_row > 1 else 0
+        
+        success_msg = f"¡Proceso completado! {new_count} facturas procesadas y agregadas al Excel con éxito."
+        if unmatched_count > 0:
+            success_msg += f"\n\n⚠️ {unmatched_count} items sin clasificar encontrados en la hoja 'Items Sin Clasificar' para revisión manual."
+        
+        st.success(success_msg)
         output.seek(0)
         st.download_button("Descargar Reporte Final", data=output.getvalue(), 
                            file_name="Reporte_MAGA_Actualizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
